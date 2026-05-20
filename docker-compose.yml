@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  gitee-webhook-server:
+    build: .
+    container_name: gitee-webhook-server
+    ports:
+      - "5000:5000"
+    environment:
+      - GITEE_WEBHOOK_SECRET=${GITEE_WEBHOOK_SECRET}
+      - FLASK_DEBUG=0
+    restart: unless-stopped
+    volumes:
+      - .:/app
