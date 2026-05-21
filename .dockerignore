@@ -10,7 +10,8 @@ __pycache__/
 venv/
 .pytest_cache/
 .vscode/
-*.md
+/*.md
+tests/
 test_app.py
 example.json
 requirements-dev.txt

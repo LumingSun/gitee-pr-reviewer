@@ -22,13 +22,13 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
 # Run the dev server (debug off by default, set FLASK_DEBUG=1 for debug mode)
-python app.py
+python -m src.app
 
 # Run all tests
-pytest test_app.py -v
+pytest tests/test_app.py -v
 
 # Run a single test class
-pytest test_app.py::TestWebhookToken -v
+pytest tests/test_app.py::TestWebhookToken -v
 
 # Run with Docker Compose
 docker-compose up --build
@@ -37,9 +37,15 @@ docker-compose up --build
 ## Architecture
 
 ```
-app.py                  # Flask webhook server — single entry point
-test_app.py             # pytest tests (9 tests covering auth, parsing, edge cases)
-example.json            # Sample Gitee webhook payload (test fixture)
+src/
+  app.py                # Flask webhook server — single entry point
+  pr_review_agent.py    # PR review agent with MCP + DeepSeek LLM
+resources/
+  review_prompt.md      # Review prompt template
+tests/
+  test_app.py           # pytest tests (9 tests covering auth, parsing, edge cases)
+  fixtures/
+    example.json        # Sample Gitee webhook payload (test fixture)
 requirements.txt        # Runtime dependencies (Flask)
 requirements-dev.txt    # Dev dependencies (pytest, pytest-flask)
 ```

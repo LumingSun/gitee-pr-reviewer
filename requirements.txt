@@ -8,3 +8,4 @@ pytest-flask
 pytest-asyncio
 langchain-deepseek
 langchain_mcp_adapters
+langfuse

@@ -10,6 +10,8 @@ import asyncio
 import logging
 import os
 from urllib.request import urlopen
+from langfuse import get_client
+from langfuse.langchain import CallbackHandler
 
 import dotenv
 from deepagents import create_deep_agent
@@ -32,6 +34,10 @@ LLM_MODEL = os.environ["DEEPSEEK_MODEL"]
 
 logger = logging.getLogger(__name__)
 
+# Initialize Langfuse client
+langfuse = get_client()
+# Initialize Langfuse CallbackHandler for Langchain (tracing)
+langfuse_handler = CallbackHandler()
 
 def create_llm() -> ChatDeepSeek:
     """Create a configured DeepSeek LLM instance.
@@ -167,6 +173,7 @@ async def review_pr(
                 }
             ],
             "files": skills_files,
+            "config": {"callbacks": [langfuse_handler]}
         }
     )
 

@@ -5,7 +5,7 @@ import threading
 
 from flask import Flask, request, jsonify
 
-from pr_review_agent import review_pr
+from src.pr_review_agent import review_pr
 
 app = Flask(__name__)
 

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app import app
+from src.app import app
 
 
 @pytest.fixture
@@ -14,13 +14,13 @@ def client():
 
 @pytest.fixture(scope="module")
 def example_data():
-    with open('example.json', 'r', encoding='utf-8') as f:
+    with open('tests/fixtures/example.json', 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
 class TestWebhookToken:
     def test_valid_token(self, client, monkeypatch):
-        monkeypatch.setattr('app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json',
@@ -28,7 +28,7 @@ class TestWebhookToken:
         assert response.status_code == 200
 
     def test_invalid_token_returns_403(self, client, monkeypatch):
-        monkeypatch.setattr('app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json',
@@ -37,14 +37,14 @@ class TestWebhookToken:
         assert 'Invalid webhook token' in response.get_json()['error']
 
     def test_missing_token_returns_403(self, client, monkeypatch):
-        monkeypatch.setattr('app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json')
         assert response.status_code == 403
 
     def test_no_secret_configured_allows_all(self, client, monkeypatch):
-        monkeypatch.setattr('app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json')
@@ -84,7 +84,7 @@ class TestWebhookResponse:
         assert 'PR open event:' not in caplog.text
 
     def test_invalid_json_returns_400(self, client, monkeypatch):
-        monkeypatch.setattr('app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
         response = client.post('/webhook',
                                data='not json',
                                content_type='application/json')

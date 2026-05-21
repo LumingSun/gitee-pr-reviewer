@@ -52,7 +52,7 @@ pip install -r requirements-dev.txt
 cp .env.example .env
 
 # Run the server
-python app.py
+python -m src.app
 ```
 
 The server starts on `http://localhost:5000`.
@@ -67,10 +67,10 @@ docker-compose up --build
 
 ```bash
 # Run Flask server tests
-pytest test_app.py -v
+pytest tests/test_app.py -v
 
 # Run PR Agent tests
-pytest test_pr_agent.py -v
+pytest tests/test_pr_agent.py -v
 
 # Run all tests
 pytest -v
@@ -153,28 +153,24 @@ Copy `.env.example` to `.env` and configure:
 
 ```
 .
-├── app.py                      # Flask webhook server with PR review integration
-├── pr_review_agent.py          # LangChain PR Review Agent with MCP integration
-├── test_app.py                 # Flask server tests (13 test cases)
-├── test_pr_agent.py            # PR Agent tests
-├── example.json                # Sample webhook payload for testing
-├── requirements.txt            # Runtime dependencies (Flask, LangChain, MCP adapters)
-├── requirements-dev.txt        # Dev dependencies (pytest, pytest-asyncio, etc.)
-├── Dockerfile                  # Container build
-├── .dockerignore               # Build context exclusions
-├── docker-compose.yml          # Local Docker setup
-├── .env.example                # Environment config template
-├── CLAUDE.md                   # Claude Code guidance
-├── README.md
-├── code-review-expert/         # Code review skill (prompts and checklists)
-│   ├── SKILL.md               # Main skill definition
-│   ├── README.md              # Skill documentation
-│   ├── agents/agent.yaml      # Agent interface config
-│   └── references/            # Review checklists
-├── mcp/                        # Gitee MCP client
-│   └── gitee_client.py        # HTTP streamable MCP client for Gitee
-└── prompts/                    # Agent prompt templates
-    └── review_agent_prompt.md # Integrated PR review agent prompt
+├── src/                         # Application source code
+│   ├── app.py                   # Flask webhook server with PR review integration
+│   └── pr_review_agent.py       # LangChain PR Review Agent with MCP integration
+├── resources/                   # Static resources
+│   └── review_prompt.md         # Review prompt template
+├── tests/                       # Test suite
+│   ├── test_app.py              # Flask server tests
+│   ├── test_pr_agent.py         # PR Agent tests
+│   └── fixtures/
+│       └── example.json         # Sample webhook payload for testing
+├── requirements.txt             # Runtime dependencies (Flask, LangChain, MCP adapters)
+├── requirements-dev.txt         # Dev dependencies (pytest, pytest-asyncio, etc.)
+├── Dockerfile                   # Container build
+├── .dockerignore                # Build context exclusions
+├── docker-compose.yml           # Local Docker setup
+├── .env.example                 # Environment config template
+├── CLAUDE.md                    # Claude Code guidance
+└── README.md
 ```
 
 ## Troubleshooting
@@ -202,17 +198,11 @@ Copy `.env.example` to `.env` and configure:
 
 ## Development Notes
 
-### Adding New MCP Tools
-1. Update `mcp/gitee_client.py` with new tool methods
-2. Add tool to agent's prompt template in `prompts/review_agent_prompt.md`
-3. Test the tool integration
-
 ### Customizing Review Guidelines
-1. Modify `code-review-expert/SKILL.md` for general guidelines
-2. Update reference checklists in `code-review-expert/references/`
-3. Adjust severity levels and review criteria in agent prompt
+1. Modify `resources/review_prompt.md` for the review prompt
+2. Adjust severity levels and review criteria in the prompt
 
 ### Extending with Additional LLMs
-1. Add new provider import in `pr_review_agent.py`
-2. Extend `_create_llm()` method to support the new provider
+1. Add new provider import in `src/pr_review_agent.py`
+2. Extend `create_llm()` method to support the new provider
 3. Add corresponding environment variable for API key
