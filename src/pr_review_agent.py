@@ -23,7 +23,6 @@ dotenv.load_dotenv()
 # Constants (all values read from .env)
 # ---------------------------------------------------------------------------
 
-REVIEW_PROMPT_PATH = os.environ["REVIEW_PROMPT_PATH"]
 SKILL_URL = os.environ["CODE_REVIEW_SKILL_URL"]
 MCP_URL = os.environ["GITEE_MCP_URL"]
 MCP_AUTH_TOKEN = os.environ["GITEE_MCP_AUTH_TOKEN"]
@@ -49,7 +48,7 @@ def create_llm() -> ChatDeepSeek:
     )
 
 
-def load_review_prompt() -> str:
+def load_prompt(path) -> str:
     """Load the review prompt from the configured file path.
 
     Returns:
@@ -58,7 +57,7 @@ def load_review_prompt() -> str:
     Raises:
         FileNotFoundError: If the prompt file is not found.
     """
-    with open(REVIEW_PROMPT_PATH, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
 
@@ -116,19 +115,37 @@ async def review_pr(
                 repo_full_name, pr_id, source_branch, target_branch)
 
     tools = await get_gitee_tools()
-    prompt = load_review_prompt()
-    logger.info("Review prompt loaded from %s (%d chars)",
-                REVIEW_PROMPT_PATH, len(prompt))
+    review_prompt = load_prompt("resources/review_prompt.md")
+    system_prompt = load_prompt("resources/system_prompt.md")
+    code_diff_prompt = load_prompt("resources/code_diff_prompt.md")
+    logger.info("Prompts loaded")
 
     llm = create_llm()
     logger.info("Creating agent: model=%s tools=%d", LLM_MODEL, len(tools))
+    
+    review_subagent = {
+        "name": "reviewer",
+        "description": "Code review specialist with MCP tools for posting comments and filesystem access",
+        "system_prompt": review_prompt,
+        "backend": backend,
+        "tools": tools,
+        "skills": ["skills"],
+    }
+
+    code_diff_subagent = {
+        "name": "code-diff-fetcher",
+        "description": "Get git PR info via MCP, fetch branches and diffs via local git, write large diffs to temp files",
+        "system_prompt": code_diff_prompt,
+        # "backend": backend,
+        # TODO: sandbox backend
+        "tools": tools,
+    }
 
     agent = create_deep_agent(
         model=llm,
         tools=tools,
-        backend=backend,
-        skills=["skills"],
-        system_prompt=prompt,
+        system_prompt=system_prompt,
+        subagents=[review_subagent, code_diff_subagent],
     )
 
     logger.info("Invoking agent for %s#%s ...", repo_full_name, pr_id)
