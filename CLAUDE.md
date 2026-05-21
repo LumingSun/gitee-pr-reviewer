@@ -40,7 +40,7 @@ docker-compose up --build
 app.py                  # Flask webhook server — single entry point
 test_app.py             # pytest tests (9 tests covering auth, parsing, edge cases)
 example.json            # Sample Gitee webhook payload (test fixture)
-requirements.txt        # Runtime dependencies (Flask, Werkzeug)
+requirements.txt        # Runtime dependencies (Flask)
 requirements-dev.txt    # Dev dependencies (pytest, pytest-flask)
 ```
 

@@ -1,2 +1,10 @@
-Flask==2.3.0
-Werkzeug==2.3.0
+Flask
+deepagents 
+tavily-python
+httpx
+python-dotenv
+pytest
+pytest-flask
+pytest-asyncio
+langchain-deepseek
+langchain_mcp_adapters

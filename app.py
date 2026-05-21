@@ -1,11 +1,36 @@
+import asyncio
 import json
 import os
+import threading
 
 from flask import Flask, request, jsonify
+
+from pr_review_agent import review_pr
 
 app = Flask(__name__)
 
 GITEE_WEBHOOK_SECRET = os.getenv('GITEE_WEBHOOK_SECRET', '')
+
+
+def _run_review_in_background(repo_full_name, pr_number, source_branch,
+                              target_branch, title, body):
+    """Run async review_pr in a background thread to avoid blocking the webhook."""
+    def _runner():
+        try:
+            asyncio.run(review_pr(
+                repo_full_name=repo_full_name,
+                pr_id=str(pr_number),
+                source_branch=source_branch,
+                target_branch=target_branch,
+                title=title,
+                body=body,
+            ))
+        except Exception:
+            app.logger.exception('Background review failed for %s#%s',
+                                 repo_full_name, pr_number)
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
 
 
 def verify_webhook_token(request):
@@ -37,9 +62,28 @@ def webhook():
             body = data.get('body', '').strip()
             source_branch = data.get('source_branch', '').strip()
             target_branch = data.get('target_branch', '').strip()
+            repository = data.get('repository', {}) or {}
+            repo_full_name = repository.get('full_name', '')
 
-            app.logger.info('PR open event: title=%s number=%s source=%s target=%s body_len=%d',
-                            title, number, source_branch, target_branch, len(body))
+            app.logger.info('PR open event: title=%s number=%s source=%s target=%s '
+                            'repo=%s body_len=%d',
+                            title, number, source_branch, target_branch,
+                            repo_full_name, len(body))
+
+            if repo_full_name and number:
+                _run_review_in_background(
+                    repo_full_name=repo_full_name,
+                    pr_number=number,
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                    title=title,
+                    body=body,
+                )
+                app.logger.info('Background review started for %s#%s',
+                                repo_full_name, number)
+            else:
+                app.logger.warning('Missing repo_full_name or number, '
+                                   'skipping review')
 
         return jsonify({'status': 'success', 'message': 'Webhook received'}), 200
 
