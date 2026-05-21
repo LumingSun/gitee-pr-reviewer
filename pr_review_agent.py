@@ -30,6 +30,8 @@ MCP_URL = os.environ["GITEE_MCP_URL"]
 MCP_AUTH_TOKEN = os.environ["GITEE_MCP_AUTH_TOKEN"]
 LLM_MODEL = os.environ["DEEPSEEK_MODEL"]
 
+logger = logging.getLogger(__name__)
+
 
 def create_llm() -> ChatDeepSeek:
     """Create a configured DeepSeek LLM instance.
@@ -86,6 +88,7 @@ async def get_gitee_tools() -> list[BaseTool]:
     Returns:
         list[BaseTool]: Tools exposed by the Gitee MCP server.
     """
+    logger.info("Connecting to Gitee MCP: %s", MCP_URL)
     headers = {}
     if MCP_AUTH_TOKEN:
         headers["Authorization"] = MCP_AUTH_TOKEN
@@ -99,7 +102,9 @@ async def get_gitee_tools() -> list[BaseTool]:
             }
         }
     )
-    return await mcp_client.get_tools(server_name="gitee")
+    tools = await mcp_client.get_tools(server_name="gitee")
+    logger.info("Gitee MCP connected: %d tools loaded", len(tools))
+    return tools
 
 
 async def review_pr(
@@ -123,10 +128,19 @@ async def review_pr(
     Returns:
         str: The agent's review result text.
     """
+    logger.info("Starting review: repo=%s pr=%s source=%s -> target=%s",
+                repo_full_name, pr_id, source_branch, target_branch)
+
     tools = await get_gitee_tools()
     prompt = load_review_prompt()
+    logger.info("Review prompt loaded from %s (%d chars)",
+                REVIEW_PROMPT_PATH, len(prompt))
+
     skills_files = load_skill_files()
+    logger.info("Skill files loaded from %s", SKILL_URL)
+
     llm = create_llm()
+    logger.info("Creating agent: model=%s tools=%d", LLM_MODEL, len(tools))
 
     agent = create_deep_agent(
         model=llm,
@@ -135,6 +149,7 @@ async def review_pr(
         system_prompt=prompt,
     )
 
+    logger.info("Invoking agent for %s#%s ...", repo_full_name, pr_id)
     result = await agent.ainvoke(
         {
             "messages": [
@@ -155,7 +170,8 @@ async def review_pr(
         }
     )
 
-    logging.info("Finished review for %s#%s", repo_full_name, pr_id)
+    logger.info("Agent finished for %s#%s", repo_full_name, pr_id)
+    logger.info("Finished review for %s#%s", repo_full_name, pr_id)
     return result
 
 

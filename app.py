@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import threading
 
@@ -7,6 +8,13 @@ from flask import Flask, request, jsonify
 from pr_review_agent import review_pr
 
 app = Flask(__name__)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+app.logger.setLevel(logging.INFO)
 
 GITEE_WEBHOOK_SECRET = os.getenv('GITEE_WEBHOOK_SECRET', '')
 
