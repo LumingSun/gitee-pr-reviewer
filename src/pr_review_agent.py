@@ -9,13 +9,10 @@ This module provides an async PR review pipeline that:
 import asyncio
 import logging
 import os
-from urllib.request import urlopen
-from langfuse import get_client
-from langfuse.langchain import CallbackHandler
-
 import dotenv
+
 from deepagents import create_deep_agent
-from deepagents.backends.utils import create_file_data
+from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools.base import BaseTool
 from langchain_deepseek import ChatDeepSeek
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -34,10 +31,8 @@ LLM_MODEL = os.environ["DEEPSEEK_MODEL"]
 
 logger = logging.getLogger(__name__)
 
-# Initialize Langfuse client
-langfuse = get_client()
-# Initialize Langfuse CallbackHandler for Langchain (tracing)
-langfuse_handler = CallbackHandler()
+root_dir = "./resources"
+backend = FilesystemBackend(root_dir=root_dir, virtual_mode=True)
 
 def create_llm() -> ChatDeepSeek:
     """Create a configured DeepSeek LLM instance.
@@ -65,23 +60,6 @@ def load_review_prompt() -> str:
     """
     with open(REVIEW_PROMPT_PATH, "r", encoding="utf-8") as f:
         return f.read()
-
-
-def load_skill_files() -> dict:
-    """Download the code review skill and wrap it for the agent.
-
-    Returns:
-        dict: Skills files mapping for the deep agent, keyed by virtual path.
-
-    Raises:
-        URLError: If the skill URL cannot be reached.
-    """
-    with urlopen(SKILL_URL) as response:
-        skill_content = response.read().decode("utf-8")
-
-    return {
-        "/skills/code-review-expert/SKILL.md": create_file_data(skill_content),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -142,16 +120,14 @@ async def review_pr(
     logger.info("Review prompt loaded from %s (%d chars)",
                 REVIEW_PROMPT_PATH, len(prompt))
 
-    skills_files = load_skill_files()
-    logger.info("Skill files loaded from %s", SKILL_URL)
-
     llm = create_llm()
     logger.info("Creating agent: model=%s tools=%d", LLM_MODEL, len(tools))
 
     agent = create_deep_agent(
         model=llm,
         tools=tools,
-        skills=["/skills/"],
+        backend=backend,
+        skills=["skills"],
         system_prompt=prompt,
     )
 
@@ -172,8 +148,6 @@ async def review_pr(
                     ),
                 }
             ],
-            "files": skills_files,
-            "config": {"callbacks": [langfuse_handler]}
         }
     )
 
@@ -190,10 +164,10 @@ if __name__ == "__main__":
     asyncio.run(
         review_pr(
             repo_full_name="LumingSun/kwdb",
-            pr_id="3",
+            pr_id="11",
             source_branch="test-pr",
             target_branch="master",
-            title="test-remove-later",
+            title="",
             body="  ",
         )
     )
