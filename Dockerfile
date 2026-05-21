@@ -7,7 +7,7 @@ RUN useradd --create-home appuser
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY app.py pr_review_agent.py review_prompt.md ./
 
 USER appuser
 

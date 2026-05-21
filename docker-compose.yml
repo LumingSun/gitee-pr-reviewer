@@ -6,9 +6,14 @@ services:
     container_name: gitee-webhook-server
     ports:
       - "5000:5000"
+      - "443:5000"
     environment:
       - GITEE_WEBHOOK_SECRET=${GITEE_WEBHOOK_SECRET}
       - FLASK_DEBUG=0
+      - SSL_CERT_PATH=${SSL_CERT_PATH}
+      - SSL_KEY_PATH=${SSL_KEY_PATH}
     restart: unless-stopped
     volumes:
       - .:/app
+      - ${SSL_CERT_PATH:-/dev/null}:${SSL_CERT_PATH:-/dev/null}:ro
+      - ${SSL_KEY_PATH:-/dev/null}:${SSL_KEY_PATH:-/dev/null}:ro
