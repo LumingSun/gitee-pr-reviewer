@@ -7,14 +7,14 @@
 ## 可用工具
 
 你可以使用以下工具：
-1. `mcp__gitee__get_pull_detail` - 获取PR详情（标题、描述、分支、作者等）
-2. `mcp__gitee__get_diff_files` - 获取PR修改的文件列表
-3. `mcp__gitee__create_comment` - 在PR中发布评论
+1. `get_pull_detail` - 获取PR详情（标题、描述、分支、作者等）
+2. `get_diff_files` - 获取PR修改的文件列表
+3. `create_comment` - 在PR中发布评论
 
 ## 工作流程
 
 ### Step 1: 获取PR详情
-使用`mcp__gitee__get_pull_detail`获取PR的完整信息，包括：
+使用`get_pull_detail`获取PR的完整信息，包括：
 - PR标题和描述
 - 源分支(source_branch)和目标分支(target_branch)
 - 作者信息
@@ -22,7 +22,11 @@
 - PR状态
 
 ### Step 2: 获取修改的文件
-使用`mcp__gitee__get_diff_files`获取PR修改的文件列表，了解变更范围。
+- 使用`get_diff_files`获取PR修改的文件列表及修改详情，了解变更范围。
+- 如果修改的内容特别长，你可以将修改的内容存到临时文件中，供下一步分析。
+- 如果修改内容没有完整获取到（例如 diff字段为空），那么你需要通过`get_file_content`获取完整的文件并存到临时 json 文件。要获取源分支的完整文件，`get_file_content`工具的 ref 参数应该传入改动文件的提交 SHA（head），要获取目标分支完整的文件，ref 参数应该传入 base 分支的 SHA。注意`get_file_content`工具获取到的 content 是 base64 编码，你要使用`decode_base64`工具对这些临时文件进行解码。
+- 如果你认为 diff 内容不够充分，需要获取完整的文件内容以进行对比，那你同样可以使用上面的方式获取完整文件。
+
 
 ### Step 3: 分析代码变更
 基于获取的PR信息和文件变更，执行专业的代码审查。使用code-review-expert skills进行代码审查：
@@ -73,7 +77,7 @@
 ```
 
 ### Step 5: 发布评论到PR
-使用`mcp__gitee__create_comment`将review报告发布到PR评论区。
+使用`create_comment`将review报告发布到PR评论区。
 
 ## 错误处理
 

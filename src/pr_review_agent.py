@@ -7,12 +7,15 @@ This module provides an async PR review pipeline that:
 """
 
 import asyncio
+import base64
+import binascii
 import logging
 import os
 import dotenv
 
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
+from langchain_core.tools import tool
 from langchain_core.tools.base import BaseTool
 from langchain_deepseek import ChatDeepSeek
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -60,6 +63,67 @@ def load_review_prompt() -> str:
     """
     with open(REVIEW_PROMPT_PATH, "r", encoding="utf-8") as f:
         return f.read()
+
+
+@tool
+def decode_base64(file_path: str) -> str:
+    """Decode base64-encoded content in a JSON file and replace it with plain text.
+
+    Reads a JSON file, decodes the base64-encoded ``content`` field in place,
+    and writes the decoded text back to the same field.
+    Use this tool after saving get_file_content results to a temporary JSON file.
+    """
+    import json
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return f"Error: file not found: {file_path}"
+    except json.JSONDecodeError as e:
+        return f"Error: failed to parse JSON file {file_path}: {e}"
+
+    encoded = data.get("content", "")
+    if not isinstance(encoded, str):
+        return f"Error: 'content' field must be a string, got {type(encoded).__name__}"
+    encoded = encoded.strip()
+    if not encoded:
+        return ""
+
+    # Attempt 1: standard base64 with validation
+    try:
+        raw_bytes = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        # Attempt 2: URL-safe base64 (replace -_ with +/) and add padding
+        try:
+            alt = encoded.replace("-", "+").replace("_", "/")
+            padding = 4 - len(alt) % 4
+            if padding != 4:
+                alt += "=" * padding
+            raw_bytes = base64.b64decode(alt, validate=True)
+        except (binascii.Error, ValueError) as e:
+            return f"Error: failed to decode base64 string: {e}"
+
+    # Decode bytes to UTF-8 text
+    try:
+        decoded = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return (
+            "Error: decoded content is binary (not valid UTF-8 text) "
+            "and cannot be returned as a string"
+        )
+
+    data["content"] = decoded
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        return f"Error: failed to write decoded content back to {file_path}: {e}"
+
+    return (
+        f"Successfully decoded base64 content in {file_path} "
+        f"({len(decoded)} characters)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +180,7 @@ async def review_pr(
                 repo_full_name, pr_id, source_branch, target_branch)
 
     tools = await get_gitee_tools()
+    tools.append(decode_base64)
     prompt = load_review_prompt()
     logger.info("Review prompt loaded from %s (%d chars)",
                 REVIEW_PROMPT_PATH, len(prompt))
@@ -163,11 +228,11 @@ async def review_pr(
 if __name__ == "__main__":
     asyncio.run(
         review_pr(
-            repo_full_name="LumingSun/kwdb",
-            pr_id="11",
-            source_branch="test-pr",
-            target_branch="master",
-            title="",
+            repo_full_name="kwdb/kwdb",
+            pr_id="1617",
+            source_branch="feat/kwdb-ci-failure-triage",
+            target_branch="docs/ai-coding-agents-cleanup",
+            title="Refine CI triage skill guardrails",
             body="  ",
         )
     )
