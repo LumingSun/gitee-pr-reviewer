@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import threading
@@ -17,6 +18,7 @@ logging.basicConfig(
 app.logger.setLevel(logging.INFO)
 
 GITEE_WEBHOOK_SECRET = os.getenv('GITEE_WEBHOOK_SECRET', '')
+REVIEW_TRIGGER_MENTION = os.getenv('REVIEW_TRIGGER_MENTION', '@ReviewAI')
 
 
 def _run_review_in_background(repo_full_name, pr_number, source_branch,
@@ -48,16 +50,61 @@ def verify_webhook_token(request):
     return token == GITEE_WEBHOOK_SECRET
 
 
+def _safe_strip(value):
+    """Safely strip a string, handling None values."""
+    return (value or '').strip()
+
+
+def _parse_open_payload(data):
+    """Extract PR review fields from an 'open' action webhook payload."""
+    repository = data.get('repository', {}) or {}
+    return {
+        'repo_full_name': repository.get('full_name', ''),
+        'pr_number': data.get('number'),
+        'title': _safe_strip(data.get('title')),
+        'body': _safe_strip(data.get('body')),
+        'source_branch': _safe_strip(data.get('source_branch')),
+        'target_branch': _safe_strip(data.get('target_branch')),
+    }
+
+
+def _parse_comment_payload(data):
+    """Extract PR review fields from a 'comment' action webhook payload."""
+    pr_data = data.get('pull_request', {}) or {}
+    repository = data.get('repository', {}) or {}
+    return {
+        'repo_full_name': repository.get('full_name', ''),
+        'pr_number': pr_data.get('number'),
+        'title': _safe_strip(pr_data.get('title')),
+        'body': _safe_strip(pr_data.get('body')),
+        'source_branch': _safe_strip(
+            (pr_data.get('head', {}) or {}).get('ref')),
+        'target_branch': _safe_strip(
+            (pr_data.get('base', {}) or {}).get('ref')),
+    }
+
+
 @app.before_request
 def log_request():
-    """Log every incoming request for diagnostics."""
+    """Log every incoming request for diagnostics, redacting sensitive fields."""
+    headers = dict(request.headers)
+    if 'X-Gitee-Token' in headers:
+        headers['X-Gitee-Token'] = '***'
+    raw_body = request.get_data(as_text=True)[:500]
+    try:
+        body_json = json.loads(raw_body)
+        if isinstance(body_json, dict) and 'password' in body_json:
+            body_json['password'] = '***'
+        body = json.dumps(body_json)
+    except Exception:
+        body = raw_body
     app.logger.info(
         '>>> REQUEST %s %s from %s\n'
         '    Headers: %s\n'
         '    Body: %s',
         request.method, request.path, request.remote_addr,
-        dict(request.headers),
-        request.get_data(as_text=True)[:500],
+        headers,
+        body,
     )
 
 
@@ -74,34 +121,43 @@ def _handle_webhook():
     app.logger.info('Webhook payload: action=%s number=%s',
                     data.get('action'), data.get('number'))
 
-    if data.get('action') == 'open':
-        title = data.get('title', '').strip()
-        number = data.get('number')
-        body = data.get('body', '').strip()
-        source_branch = data.get('source_branch', '').strip()
-        target_branch = data.get('target_branch', '').strip()
-        repository = data.get('repository', {}) or {}
-        repo_full_name = repository.get('full_name', '')
+    triggered = False
+    fields = {
+        'repo_full_name': '',
+        'pr_number': None,
+        'source_branch': '',
+        'target_branch': '',
+        'title': '',
+        'body': '',
+    }
 
+    if data.get('action') == 'open':
+        triggered = True
+        fields = _parse_open_payload(data)
         app.logger.info('PR open event: title=%s number=%s source=%s target=%s '
                         'repo=%s body_len=%d',
-                        title, number, source_branch, target_branch,
-                        repo_full_name, len(body))
+                        fields['title'], fields['pr_number'],
+                        fields['source_branch'], fields['target_branch'],
+                        fields['repo_full_name'], len(fields['body']))
 
-        if repo_full_name and number:
-            _run_review_in_background(
-                repo_full_name=repo_full_name,
-                pr_number=number,
-                source_branch=source_branch,
-                target_branch=target_branch,
-                title=title,
-                body=body,
-            )
-            app.logger.info('Background review started for %s#%s',
-                            repo_full_name, number)
-        else:
-            app.logger.warning('Missing repo_full_name or number, '
-                               'skipping review')
+    elif (data.get('action') == 'comment'
+          and data.get('noteable_type') == 'PullRequest'
+          and REVIEW_TRIGGER_MENTION in data.get('comment', {}).get('body', '')):
+        triggered = True
+        fields = _parse_comment_payload(data)
+        app.logger.info('PR comment trigger: title=%s number=%s source=%s '
+                        'target=%s repo=%s body_len=%d',
+                        fields['title'], fields['pr_number'],
+                        fields['source_branch'], fields['target_branch'],
+                        fields['repo_full_name'], len(fields['body']))
+
+    if fields['repo_full_name'] and fields['pr_number']:
+        _run_review_in_background(**fields)
+        app.logger.info('Background review started for %s#%s',
+                        fields['repo_full_name'], fields['pr_number'])
+    elif triggered:
+        app.logger.warning('Missing repo_full_name or number, '
+                           'skipping review')
 
     return jsonify({'status': 'success', 'message': 'Webhook received'}), 200
 
