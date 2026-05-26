@@ -49,6 +49,7 @@ def create_llm() -> ChatDeepSeek:
         max_tokens=None,
         timeout=None,
         max_retries=2,
+        extra_body={"thinking": {"type": "disabled"}}
     )
 
 
