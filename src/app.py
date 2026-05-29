@@ -142,7 +142,7 @@ def _handle_webhook():
 
     elif (data.get('action') == 'comment'
           and data.get('noteable_type') == 'PullRequest'
-          and REVIEW_TRIGGER_MENTION in data.get('comment', {}).get('body', '')):
+          and REVIEW_TRIGGER_MENTION in data.get('comment', {}).get('body', '').lower()):
         triggered = True
         fields = _parse_comment_payload(data)
         app.logger.info('PR comment trigger: title=%s number=%s source=%s '

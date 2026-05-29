@@ -227,13 +227,59 @@ async def review_pr(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run a Gitee PR code review via DeepSeek LLM."
+    )
+    parser.add_argument(
+        "--name",
+        "--repo",
+        dest="repo_full_name",
+        required=True,
+        help="Repository full name, e.g. 'owner/repo'",
+    )
+    parser.add_argument(
+        "--id",
+        "--pr-id",
+        dest="pr_id",
+        required=True,
+        help="Gitee PR number or ID",
+    )
+    parser.add_argument(
+        "--source-branch",
+        "-s",
+        dest="source_branch",
+        required=True,
+        help="PR source branch name",
+    )
+    parser.add_argument(
+        "--target-branch",
+        "-t",
+        dest="target_branch",
+        required=True,
+        help="PR target branch name",
+    )
+    parser.add_argument(
+        "--title",
+        default="",
+        help="PR title (optional)",
+    )
+    parser.add_argument(
+        "--body",
+        default="",
+        help="PR body / description (optional)",
+    )
+
+    args = parser.parse_args()
+
     asyncio.run(
         review_pr(
-            repo_full_name="kwdb/kwdb",
-            pr_id="1617",
-            source_branch="feat/kwdb-ci-failure-triage",
-            target_branch="docs/ai-coding-agents-cleanup",
-            title="Refine CI triage skill guardrails",
-            body="  ",
+            repo_full_name=args.repo_full_name,
+            pr_id=args.pr_id,
+            source_branch=args.source_branch,
+            target_branch=args.target_branch,
+            title=args.title,
+            body=args.body,
         )
     )
