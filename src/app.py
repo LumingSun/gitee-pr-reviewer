@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import random
 import threading
+import time
 
 from flask import Flask, request, jsonify
 
@@ -19,24 +21,37 @@ app.logger.setLevel(logging.INFO)
 
 GITEE_WEBHOOK_SECRET = os.getenv('GITEE_WEBHOOK_SECRET', '')
 REVIEW_TRIGGER_MENTION = os.getenv('REVIEW_TRIGGER_MENTION', '@ReviewAI')
+MAX_REVIEW_RETRIES = int(os.getenv('MAX_REVIEW_RETRIES', '3'))
 
 
 def _run_review_in_background(repo_full_name, pr_number, source_branch,
                               target_branch, title, body):
-    """Run async review_pr in a background thread to avoid blocking the webhook."""
+    """Run async review_pr in a background thread with retry logic."""
     def _runner():
-        try:
-            asyncio.run(review_pr(
-                repo_full_name=repo_full_name,
-                pr_id=str(pr_number),
-                source_branch=source_branch,
-                target_branch=target_branch,
-                title=title,
-                body=body,
-            ))
-        except Exception:
-            app.logger.exception('Background review failed for %s#%s',
-                                 repo_full_name, pr_number)
+        for attempt in range(1, MAX_REVIEW_RETRIES + 1):
+            try:
+                asyncio.run(review_pr(
+                    repo_full_name=repo_full_name,
+                    pr_id=str(pr_number),
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                    title=title,
+                    body=body,
+                ))
+                return
+            except Exception as e:
+                if attempt < MAX_REVIEW_RETRIES:
+                    delay = (2 ** attempt) + random.uniform(0, 1)
+                    app.logger.warning(
+                        'Review attempt %d/%d failed for %s#%s: %s. '
+                        'Retrying in %.1fs...',
+                        attempt, MAX_REVIEW_RETRIES,
+                        repo_full_name, pr_number, e, delay)
+                    time.sleep(delay)
+                else:
+                    app.logger.exception(
+                        'All %d attempts failed for %s#%s',
+                        MAX_REVIEW_RETRIES, repo_full_name, pr_number)
 
     thread = threading.Thread(target=_runner, daemon=True)
     thread.start()

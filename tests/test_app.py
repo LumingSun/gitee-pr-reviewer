@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 
 import pytest
 
@@ -147,3 +149,77 @@ class TestWebhookResponse:
                                    content_type='application/json')
         assert response.status_code == 200
         assert 'PR comment trigger:' not in caplog.text
+
+
+class TestReviewRetry:
+    """Tests for the retry mechanism in _run_review_in_background."""
+
+    def test_retry_on_failure(self, client, example_data, monkeypatch):
+        """Review should be retried on failure and eventually succeed."""
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.MAX_REVIEW_RETRIES', 3)
+
+        call_count = 0
+        done = threading.Event()
+
+        async def mock_review_pr(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise RuntimeError(f'Transient failure #{call_count}')
+            done.set()
+
+        monkeypatch.setattr('src.app.review_pr', mock_review_pr)
+
+        response = client.post('/webhook',
+                               data=json.dumps(example_data),
+                               content_type='application/json')
+        assert response.status_code == 200
+        assert done.wait(timeout=10), 'Review did not complete in time'
+        assert call_count == 3
+
+    def test_all_retries_exhausted(self, client, example_data, monkeypatch):
+        """When all retries fail, all attempts should be made."""
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.MAX_REVIEW_RETRIES', 3)
+
+        call_count = 0
+        done = threading.Event()
+
+        async def mock_review_pr(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 3:
+                done.set()
+            raise RuntimeError(f'Persistent failure #{call_count}')
+
+        monkeypatch.setattr('src.app.review_pr', mock_review_pr)
+
+        response = client.post('/webhook',
+                               data=json.dumps(example_data),
+                               content_type='application/json')
+        assert response.status_code == 200
+        assert done.wait(timeout=15), 'Retries did not complete in time'
+        assert call_count == 3
+
+    def test_first_attempt_succeeds(self, client, example_data, monkeypatch):
+        """When the first attempt succeeds, only one attempt should be made."""
+        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.MAX_REVIEW_RETRIES', 3)
+
+        call_count = 0
+        done = threading.Event()
+
+        async def mock_review_pr(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            done.set()
+
+        monkeypatch.setattr('src.app.review_pr', mock_review_pr)
+
+        response = client.post('/webhook',
+                               data=json.dumps(example_data),
+                               content_type='application/json')
+        assert response.status_code == 200
+        assert done.wait(timeout=5), 'Review did not complete in time'
+        assert call_count == 1
