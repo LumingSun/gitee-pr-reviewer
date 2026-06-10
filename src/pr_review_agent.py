@@ -1,9 +1,13 @@
-"""Gitee PR review agent using DeepSeek LLM and MCP tools.
+"""Gitee PR review agent using LLM and MCP tools.
 
 This module provides an async PR review pipeline that:
 1. Connects to a Gitee MCP server for PR data access
 2. Loads a code review skill from a remote source
-3. Uses DeepSeek LLM to analyze PR diffs and produce review reports
+3. Uses an LLM (DeepSeek or OpenAI Compatible) to analyze PR diffs and produce review reports
+
+The LLM provider is selected via the ``LLM_PROVIDER`` environment variable:
+- ``deepseek`` (default): Uses ``ChatDeepSeek`` from ``langchain-deepseek``
+- ``openai_compatible``: Uses ``ChatOpenAI`` from ``langchain-openai`` with a custom ``base_url``
 """
 
 import asyncio
@@ -17,7 +21,6 @@ from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
 from langchain_core.tools.base import BaseTool
-from langchain_deepseek import ChatDeepSeek
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 dotenv.load_dotenv()
@@ -30,27 +33,50 @@ REVIEW_PROMPT_PATH = os.environ["REVIEW_PROMPT_PATH"]
 SKILL_URL = os.environ["CODE_REVIEW_SKILL_URL"]
 MCP_URL = os.environ["GITEE_MCP_URL"]
 MCP_AUTH_TOKEN = os.environ["GITEE_MCP_AUTH_TOKEN"]
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")
 LLM_MODEL = os.environ["DEEPSEEK_MODEL"]
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 logger = logging.getLogger(__name__)
 
 root_dir = "./resources"
 backend = FilesystemBackend(root_dir=root_dir, virtual_mode=True)
 
-def create_llm() -> ChatDeepSeek:
-    """Create a configured DeepSeek LLM instance.
+def create_llm():
+    """Create a configured LLM instance based on the provider setting.
 
     Returns:
-        ChatDeepSeek: LLM client ready for use.
+        ChatDeepSeek or ChatOpenAI: LLM client ready for use.
     """
-    return ChatDeepSeek(
-        model=LLM_MODEL,
-        temperature=0,
-        max_tokens=None,
-        timeout=None,
-        max_retries=2,
-        extra_body={"thinking": {"type": "disabled"}}
-    )
+    if LLM_PROVIDER == "openai_compatible":
+        from langchain_openai import ChatOpenAI
+
+        kwargs = dict(
+            model=OPENAI_MODEL,
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=2,
+        )
+        if OPENAI_BASE_URL:
+            kwargs["base_url"] = OPENAI_BASE_URL
+        if OPENAI_API_KEY:
+            kwargs["api_key"] = OPENAI_API_KEY
+
+        return ChatOpenAI(**kwargs)
+    else:
+        from langchain_deepseek import ChatDeepSeek
+
+        return ChatDeepSeek(
+            model=LLM_MODEL,
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=2,
+            extra_body={"thinking": {"type": "disabled"}}
+        )
 
 
 def load_review_prompt() -> str:

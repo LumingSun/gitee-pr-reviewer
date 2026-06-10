@@ -7,5 +7,6 @@ pytest
 pytest-flask
 pytest-asyncio
 langchain-deepseek
+langchain-openai
 langchain_mcp_adapters
 langfuse
