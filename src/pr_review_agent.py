@@ -23,6 +23,15 @@ from langchain_core.tools import tool
 from langchain_core.tools.base import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+try:
+    from src.webhook_notifier import send_notification
+except ModuleNotFoundError:
+    # When run directly as a script, ensure the project root is on sys.path
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.webhook_notifier import send_notification
+
 dotenv.load_dotenv()
 
 # ---------------------------------------------------------------------------
@@ -206,6 +215,12 @@ async def review_pr(
     logger.info("Starting review: repo=%s pr=%s source=%s -> target=%s",
                 repo_full_name, pr_id, source_branch, target_branch)
 
+    # Notify: review started
+    await send_notification(
+        f"🔍 Review 开始: {repo_full_name}#{pr_id} "
+        f"({source_branch} -> {target_branch})"
+    )
+
     tools = await get_gitee_tools()
     tools.append(decode_base64)
     prompt = load_review_prompt()
@@ -224,27 +239,53 @@ async def review_pr(
     )
 
     logger.info("Invoking agent for %s#%s ...", repo_full_name, pr_id)
-    result = await agent.ainvoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": (
-                        f"Please review the following PR:\n"
-                        f"Repository: {repo_full_name}\n"
-                        f"PR ID: {pr_id}\n"
-                        f"Title: {title}\n"
-                        f"Body: {body}\n"
-                        f"Source Branch: {source_branch}\n"
-                        f"Target Branch: {target_branch}"
-                    ),
-                }
-            ],
-        }
-    )
+    try:
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Please review the following PR:\n"
+                            f"Repository: {repo_full_name}\n"
+                            f"PR ID: {pr_id}\n"
+                            f"Title: {title}\n"
+                            f"Body: {body}\n"
+                            f"Source Branch: {source_branch}\n"
+                            f"Target Branch: {target_branch}"
+                        ),
+                    }
+                ],
+            }
+        )
+    except Exception as e:
+        logger.exception("Agent invocation failed for %s#%s",
+                         repo_full_name, pr_id)
+        await send_notification(
+            f"❌ Review 失败: {repo_full_name}#{pr_id} - {e}"
+        )
+        raise
 
     logger.info("Agent finished for %s#%s", repo_full_name, pr_id)
     logger.info("Finished review for %s#%s", repo_full_name, pr_id)
+
+    # Notify: review succeeded, include the last message content
+    last_message = ""
+    if isinstance(result, dict) and "messages" in result:
+        messages = result["messages"]
+        if messages:
+            last_msg = messages[-1]
+            if isinstance(last_msg, dict):
+                last_message = last_msg.get("content", str(last_msg))
+            else:
+                last_message = str(last_msg)
+    preview = last_message[:1000]
+    if len(last_message) > 1000:
+        preview += "…"
+    await send_notification(
+        f"✅ Review 完成: {repo_full_name}#{pr_id}\n\n{preview}"
+    )
+
     return result
 
 

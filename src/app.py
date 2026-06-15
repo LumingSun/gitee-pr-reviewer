@@ -9,6 +9,7 @@ import time
 from flask import Flask, request, jsonify
 
 from src.pr_review_agent import review_pr
+from src.webhook_notifier import send_notification
 
 app = Flask(__name__)
 
@@ -52,6 +53,11 @@ def _run_review_in_background(repo_full_name, pr_number, source_branch,
                     app.logger.exception(
                         'All %d attempts failed for %s#%s',
                         MAX_REVIEW_RETRIES, repo_full_name, pr_number)
+                    # Notify: all retries exhausted
+                    asyncio.run(send_notification(
+                        f"❌ Review 失败: {repo_full_name}#{pr_number} - "
+                        f"所有 {MAX_REVIEW_RETRIES} 次重试均已失败: {e}"
+                    ))
 
     thread = threading.Thread(target=_runner, daemon=True)
     thread.start()
