@@ -20,6 +20,7 @@
 - 作者信息
 - 创建时间
 - PR状态
+- 最新 commit ID（从返回的 `head.sha` 字段获取；如果有多个 commit，取最近一次 commit 的 SHA）
 
 ### Step 2: 获取修改的文件
 - 使用`get_diff_files`获取PR修改的文件列表及修改详情，了解变更范围。
@@ -40,6 +41,7 @@
 - 编号: #{PR编号}
 - 作者: {作者}
 - 分支: `{源分支}` → `{目标分支}`
+- Commit: `{commit_id}`
 - Review时间: {当前时间}
 
 ## Code Review结果
