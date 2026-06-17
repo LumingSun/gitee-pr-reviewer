@@ -9,13 +9,19 @@ import os
 
 import httpx
 
-WEBHOOK_URL = os.environ.get("REVIEW_WEBHOOK_URL", "")
 HEADERS = {"Content-Type": "application/json"}
 
 logger = logging.getLogger(__name__)
 
-# If no webhook URL is configured, notifications are silently skipped
-_notifications_enabled = bool(WEBHOOK_URL)
+
+def _get_webhook_url() -> str:
+    """Lazily read REVIEW_WEBHOOK_URL from the environment.
+
+    Using lazy evaluation instead of a module-level constant ensures
+    that the .env file is loaded *before* this function is first called,
+    regardless of import order in the entry point.
+    """
+    return os.environ.get("REVIEW_WEBHOOK_URL", "")
 
 
 async def send_notification(message: str) -> None:
@@ -28,7 +34,8 @@ async def send_notification(message: str) -> None:
     The function logs errors but does not raise exceptions,
     so a notification failure never blocks the caller.
     """
-    if not _notifications_enabled:
+    webhook_url = _get_webhook_url()
+    if not webhook_url:
         return
 
     payload = {
@@ -40,7 +47,7 @@ async def send_notification(message: str) -> None:
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                WEBHOOK_URL,
+                webhook_url,
                 json=payload,
                 headers=HEADERS,
                 timeout=10,

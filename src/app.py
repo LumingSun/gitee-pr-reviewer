@@ -6,7 +6,11 @@ import random
 import threading
 import time
 
+import dotenv
 from flask import Flask, request, jsonify
+
+# Load .env BEFORE any module that reads environment variables at import time
+dotenv.load_dotenv()
 
 from src.pr_review_agent import review_pr
 from src.webhook_notifier import send_notification
