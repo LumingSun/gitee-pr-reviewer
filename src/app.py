@@ -8,6 +8,7 @@ import time
 
 from flask import Flask, request, jsonify
 
+from src.platform_adapter import PrFields, get_platform_adapter
 from src.pr_review_agent import review_pr
 from src.webhook_notifier import send_notification
 
@@ -20,7 +21,14 @@ logging.basicConfig(
 )
 app.logger.setLevel(logging.INFO)
 
-GITEE_WEBHOOK_SECRET = os.getenv('GITEE_WEBHOOK_SECRET', '')
+# ---------------------------------------------------------------------------
+# Platform selection
+# ---------------------------------------------------------------------------
+PLATFORM = os.getenv('PLATFORM', 'gitee').strip().lower()
+adapter = get_platform_adapter(PLATFORM)
+app.logger.info('Platform: %s (adapter=%s)', PLATFORM, type(adapter).__name__)
+
+WEBHOOK_SECRET = os.getenv(adapter.webhook_secret_env, '')
 REVIEW_TRIGGER_MENTION = os.getenv('REVIEW_TRIGGER_MENTION', '@ReviewAI')
 MAX_REVIEW_RETRIES = int(os.getenv('MAX_REVIEW_RETRIES', '3'))
 
@@ -32,6 +40,7 @@ def _run_review_in_background(repo_full_name, pr_number, source_branch,
         for attempt in range(1, MAX_REVIEW_RETRIES + 1):
             try:
                 asyncio.run(review_pr(
+                    platform=PLATFORM,
                     repo_full_name=repo_full_name,
                     pr_id=str(pr_number),
                     source_branch=source_branch,
@@ -53,10 +62,9 @@ def _run_review_in_background(repo_full_name, pr_number, source_branch,
                     app.logger.exception(
                         'All %d attempts failed for %s#%s',
                         MAX_REVIEW_RETRIES, repo_full_name, pr_number)
-                    # Notify: all retries exhausted
                     asyncio.run(send_notification(
-                        f"❌ Review 失败: {repo_full_name}#{pr_number} - "
-                        f"所有 {MAX_REVIEW_RETRIES} 次重试均已失败: {e}"
+                        f"Review failed: {repo_full_name}#{pr_number} - "
+                        f"all {MAX_REVIEW_RETRIES} retries exhausted: {e}"
                     ))
 
     thread = threading.Thread(target=_runner, daemon=True)
@@ -64,53 +72,35 @@ def _run_review_in_background(repo_full_name, pr_number, source_branch,
 
 
 def verify_webhook_token(request):
-    """验证 Gitee webhook token (X-Gitee-Token header)."""
-    if not GITEE_WEBHOOK_SECRET:
+    """Verify the webhook token/signature for the active platform."""
+    if not WEBHOOK_SECRET:
         return True
-    token = request.headers.get('X-Gitee-Token', '')
-    return token == GITEE_WEBHOOK_SECRET
+    return adapter.verify_webhook_token(
+        request.headers,
+        request.get_data(),
+        WEBHOOK_SECRET,
+    )
 
 
-def _safe_strip(value):
-    """Safely strip a string, handling None values."""
-    return (value or '').strip()
-
-
-def _parse_open_payload(data):
-    """Extract PR review fields from an 'open' action webhook payload."""
-    repository = data.get('repository', {}) or {}
-    return {
-        'repo_full_name': repository.get('full_name', ''),
-        'pr_number': data.get('number'),
-        'title': _safe_strip(data.get('title')),
-        'body': _safe_strip(data.get('body')),
-        'source_branch': _safe_strip(data.get('source_branch')),
-        'target_branch': _safe_strip(data.get('target_branch')),
-    }
-
-
-def _parse_comment_payload(data):
-    """Extract PR review fields from a 'comment' action webhook payload."""
-    pr_data = data.get('pull_request', {}) or {}
-    repository = data.get('repository', {}) or {}
-    return {
-        'repo_full_name': repository.get('full_name', ''),
-        'pr_number': pr_data.get('number'),
-        'title': _safe_strip(pr_data.get('title')),
-        'body': _safe_strip(pr_data.get('body')),
-        'source_branch': _safe_strip(
-            (pr_data.get('head', {}) or {}).get('ref')),
-        'target_branch': _safe_strip(
-            (pr_data.get('base', {}) or {}).get('ref')),
-    }
+def _get_comment_body(data):
+    """Extract comment body text using the adapter's comment body path."""
+    path = adapter.get_comment_body_path()
+    val = data
+    for key in path:
+        if isinstance(val, dict):
+            val = val.get(key, {}) or {}
+        else:
+            return ''
+    return (val or '').strip() if isinstance(val, str) else ''
 
 
 @app.before_request
 def log_request():
     """Log every incoming request for diagnostics, redacting sensitive fields."""
     headers = dict(request.headers)
-    if 'X-Gitee-Token' in headers:
-        headers['X-Gitee-Token'] = '***'
+    auth_header = adapter.get_auth_header_name()
+    if auth_header in headers:
+        headers[auth_header] = '***'
     raw_body = request.get_data(as_text=True)[:500]
     try:
         body_json = json.loads(raw_body)
@@ -143,39 +133,42 @@ def _handle_webhook():
                     data.get('action'), data.get('number'))
 
     triggered = False
-    fields = {
-        'repo_full_name': '',
-        'pr_number': None,
-        'source_branch': '',
-        'target_branch': '',
-        'title': '',
-        'body': '',
-    }
+    fields = PrFields()
 
-    if data.get('action') == 'open':
+    if adapter.match_open_action(data):
         triggered = True
-        fields = _parse_open_payload(data)
-        app.logger.info('PR open event: title=%s number=%s source=%s target=%s '
-                        'repo=%s body_len=%d',
-                        fields['title'], fields['pr_number'],
-                        fields['source_branch'], fields['target_branch'],
-                        fields['repo_full_name'], len(fields['body']))
+        fields = adapter.parse_open_payload(data)
+        app.logger.info(
+            '%s PR open event: title=%s number=%s source=%s target=%s '
+            'repo=%s body_len=%d',
+            adapter.name.upper(),
+            fields.title, fields.pr_number,
+            fields.source_branch, fields.target_branch,
+            fields.repo_full_name, len(fields.body))
 
-    elif (data.get('action') == 'comment'
-          and data.get('noteable_type') == 'PullRequest'
-          and REVIEW_TRIGGER_MENTION in data.get('comment', {}).get('body', '').lower()):
+    elif (adapter.match_comment_action(data)
+          and REVIEW_TRIGGER_MENTION.lower() in _get_comment_body(data).lower()):
         triggered = True
-        fields = _parse_comment_payload(data)
-        app.logger.info('PR comment trigger: title=%s number=%s source=%s '
-                        'target=%s repo=%s body_len=%d',
-                        fields['title'], fields['pr_number'],
-                        fields['source_branch'], fields['target_branch'],
-                        fields['repo_full_name'], len(fields['body']))
+        fields = adapter.parse_comment_payload(data)
+        app.logger.info(
+            '%s PR comment trigger: title=%s number=%s source=%s '
+            'target=%s repo=%s body_len=%d',
+            adapter.name.upper(),
+            fields.title, fields.pr_number,
+            fields.source_branch, fields.target_branch,
+            fields.repo_full_name, len(fields.body))
 
-    if fields['repo_full_name'] and fields['pr_number']:
-        _run_review_in_background(**fields)
+    if fields.repo_full_name and fields.pr_number:
+        _run_review_in_background(
+            repo_full_name=fields.repo_full_name,
+            pr_number=fields.pr_number,
+            source_branch=fields.source_branch,
+            target_branch=fields.target_branch,
+            title=fields.title,
+            body=fields.body,
+        )
         app.logger.info('Background review started for %s#%s',
-                        fields['repo_full_name'], fields['pr_number'])
+                        fields.repo_full_name, fields.pr_number)
     elif triggered:
         app.logger.warning('Missing repo_full_name or number, '
                            'skipping review')
@@ -196,7 +189,7 @@ def webhook():
 def catch_webhook():
     app.logger.warning(
         'Webhook received at / (root path). '
-        'Configure Gitee webhook URL to https://<host>/webhook')
+        'Configure webhook URL to https://<host>/webhook')
     try:
         return _handle_webhook()
     except Exception as e:

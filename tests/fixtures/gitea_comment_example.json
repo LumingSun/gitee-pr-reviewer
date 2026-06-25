@@ -1,0 +1,38 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 42,
+    "title": "Fix user authentication bug",
+    "body": "This PR fixes a bug in the user authentication flow where tokens were not being properly validated.",
+    "pull_request": {
+      "head": "fix-auth-bug",
+      "base": "main"
+    },
+    "user": {
+      "login": "testuser",
+      "id": 1001
+    }
+  },
+  "comment": {
+    "id": 201,
+    "body": "@ReviewAI please review this PR",
+    "user": {
+      "login": "reviewer",
+      "id": 2002
+    },
+    "created_at": "2026-06-25T11:00:00Z"
+  },
+  "repository": {
+    "id": 1,
+    "name": "repo",
+    "full_name": "owner/repo",
+    "owner": {
+      "login": "owner",
+      "id": 500
+    }
+  },
+  "sender": {
+    "login": "reviewer",
+    "id": 2002
+  }
+}

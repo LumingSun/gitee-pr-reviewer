@@ -1,7 +1,7 @@
-"""Gitee PR review agent using LLM and MCP tools.
+"""PR review agent using LLM and MCP tools (multi-platform).
 
 This module provides an async PR review pipeline that:
-1. Connects to a Gitee MCP server for PR data access
+1. Connects to a platform-specific MCP server (Gitee / Gitea) for PR data access
 2. Loads a code review skill from a remote source
 3. Uses an LLM (DeepSeek or OpenAI Compatible) to analyze PR diffs and produce review reports
 
@@ -15,6 +15,7 @@ import base64
 import binascii
 import logging
 import os
+
 import dotenv
 
 from deepagents import create_deep_agent
@@ -23,25 +24,25 @@ from langchain_core.tools import tool
 from langchain_core.tools.base import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from src.platform_adapter import get_platform_adapter
+
 try:
     from src.webhook_notifier import send_notification
 except ModuleNotFoundError:
     # When run directly as a script, ensure the project root is on sys.path
     import sys
     from pathlib import Path
+
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src.webhook_notifier import send_notification
 
 dotenv.load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Constants (all values read from .env)
+# Constants (platform-agnostic, read from .env)
 # ---------------------------------------------------------------------------
 
-REVIEW_PROMPT_PATH = os.environ["REVIEW_PROMPT_PATH"]
 SKILL_URL = os.environ["CODE_REVIEW_SKILL_URL"]
-MCP_URL = os.environ["GITEE_MCP_URL"]
-MCP_AUTH_TOKEN = os.environ["GITEE_MCP_AUTH_TOKEN"]
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")
 LLM_MODEL = os.environ["DEEPSEEK_MODEL"]
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
@@ -52,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 root_dir = "./resources"
 backend = FilesystemBackend(root_dir=root_dir, virtual_mode=True)
+
 
 def create_llm():
     """Create a configured LLM instance based on the provider setting.
@@ -84,12 +86,12 @@ def create_llm():
             max_tokens=None,
             timeout=None,
             max_retries=2,
-            extra_body={"thinking": {"type": "disabled"}}
+            extra_body={"thinking": {"type": "disabled"}},
         )
 
 
-def load_review_prompt() -> str:
-    """Load the review prompt from the configured file path.
+def load_review_prompt(prompt_path: str) -> str:
+    """Load the review prompt from the given file path.
 
     Returns:
         str: Review prompt template content.
@@ -97,7 +99,7 @@ def load_review_prompt() -> str:
     Raises:
         FileNotFoundError: If the prompt file is not found.
     """
-    with open(REVIEW_PROMPT_PATH, "r", encoding="utf-8") as f:
+    with open(prompt_path, "r", encoding="utf-8") as f:
         return f.read()
 
 
@@ -166,44 +168,56 @@ def decode_base64(file_path: str) -> str:
 # Core API
 # ---------------------------------------------------------------------------
 
-async def get_gitee_tools() -> list[BaseTool]:
-    """Create an MCP client for Gitee and return its available tools.
+
+async def get_platform_tools(platform: str) -> list[BaseTool]:
+    """Create an MCP client for the given platform and return its tools.
+
+    Args:
+        platform: Platform identifier (``"gitee"`` or ``"gitea"``).
 
     Returns:
-        list[BaseTool]: Tools exposed by the Gitee MCP server.
+        list[BaseTool]: Tools exposed by the platform MCP server.
     """
-    logger.info("Connecting to Gitee MCP: %s", MCP_URL)
+    adapter = get_platform_adapter(platform)
+    mcp_url = os.environ[adapter.mcp_url_env]
+    mcp_auth_token = os.environ.get(adapter.mcp_auth_token_env, "")
+
+    logger.info("Connecting to %s MCP: %s", adapter.name, mcp_url)
     headers = {}
-    if MCP_AUTH_TOKEN:
-        headers["Authorization"] = MCP_AUTH_TOKEN
+    if mcp_auth_token:
+        headers["Authorization"] = mcp_auth_token
 
     mcp_client = MultiServerMCPClient(
         {
-            "gitee": {
-                "url": MCP_URL,
+            adapter.name: {
+                "url": mcp_url,
                 "transport": "streamable_http",
                 "headers": headers,
             }
         }
     )
-    tools = await mcp_client.get_tools(server_name="gitee")
-    logger.info("Gitee MCP connected: %d tools loaded", len(tools))
+    tools = await mcp_client.get_tools(server_name=adapter.name)
+    logger.info(
+        "%s MCP connected: %d tools loaded", adapter.name.upper(), len(tools)
+    )
     return tools
 
 
 async def review_pr(
-    pr_id: str,
-    source_branch: str,
-    target_branch: str,
-    title: str,
-    body: str,
-    repo_full_name="owner/repo",
+    platform: str = "gitee",
+    repo_full_name: str = "owner/repo",
+    pr_id: str = "",
+    source_branch: str = "",
+    target_branch: str = "",
+    title: str = "",
+    body: str = "",
 ) -> str:
     """Run an automated code review on a pull request.
 
     Args:
+        platform: Platform identifier (``"gitee"`` or ``"gitea"``).
         repo_full_name: Repository path (e.g. ``owner/repo``).
-        pr_id: Gitee PR number or ID.
+        pr_id: PR number or ID.
         source_branch: The PR source branch name.
         target_branch: The PR target branch name.
         title: PR title.
@@ -212,20 +226,27 @@ async def review_pr(
     Returns:
         str: The agent's review result text.
     """
-    logger.info("Starting review: repo=%s pr=%s source=%s -> target=%s",
-                repo_full_name, pr_id, source_branch, target_branch)
+    logger.info(
+        "Starting review: platform=%s repo=%s pr=%s source=%s -> target=%s",
+        platform, repo_full_name, pr_id, source_branch, target_branch,
+    )
+
+    adapter = get_platform_adapter(platform)
 
     # Notify: review started
     await send_notification(
-        f"🔍 Review 开始: {repo_full_name}#{pr_id} "
+        f"Review started: {repo_full_name}#{pr_id} "
         f"({source_branch} -> {target_branch})"
     )
 
-    tools = await get_gitee_tools()
+    tools = await get_platform_tools(platform)
     tools.append(decode_base64)
-    prompt = load_review_prompt()
-    logger.info("Review prompt loaded from %s (%d chars)",
-                REVIEW_PROMPT_PATH, len(prompt))
+
+    prompt_path = adapter.get_review_prompt_path()
+    prompt = load_review_prompt(prompt_path)
+    logger.info(
+        "Review prompt loaded from %s (%d chars)", prompt_path, len(prompt)
+    )
 
     llm = create_llm()
     logger.info("Creating agent: model=%s tools=%d", LLM_MODEL, len(tools))
@@ -259,15 +280,15 @@ async def review_pr(
             }
         )
     except Exception as e:
-        logger.exception("Agent invocation failed for %s#%s",
-                         repo_full_name, pr_id)
+        logger.exception(
+            "Agent invocation failed for %s#%s", repo_full_name, pr_id
+        )
         await send_notification(
-            f"❌ Review 失败: {repo_full_name}#{pr_id} - {e}"
+            f"Review failed: {repo_full_name}#{pr_id} - {e}"
         )
         raise
 
     logger.info("Agent finished for %s#%s", repo_full_name, pr_id)
-    logger.info("Finished review for %s#%s", repo_full_name, pr_id)
 
     # Notify: review succeeded, include the last message content
     last_message = ""
@@ -281,9 +302,9 @@ async def review_pr(
                 last_message = str(last_msg)
     preview = last_message[:1000]
     if len(last_message) > 1000:
-        preview += "…"
+        preview += "..."
     await send_notification(
-        f"✅ Review 完成: {repo_full_name}#{pr_id}\n\n{preview}"
+        f"Review completed: {repo_full_name}#{pr_id}\n\n{preview}"
     )
 
     return result
@@ -297,7 +318,13 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Run a Gitee PR code review via DeepSeek LLM."
+        description="Run a PR code review via LLM."
+    )
+    parser.add_argument(
+        "--platform",
+        default="gitee",
+        choices=["gitee", "gitea"],
+        help="Platform to use (default: gitee)",
     )
     parser.add_argument(
         "--name",
@@ -311,7 +338,7 @@ if __name__ == "__main__":
         "--pr-id",
         dest="pr_id",
         required=True,
-        help="Gitee PR number or ID",
+        help="PR number or ID",
     )
     parser.add_argument(
         "--source-branch",
@@ -342,6 +369,7 @@ if __name__ == "__main__":
 
     asyncio.run(
         review_pr(
+            platform=args.platform,
             repo_full_name=args.repo_full_name,
             pr_id=args.pr_id,
             source_branch=args.source_branch,

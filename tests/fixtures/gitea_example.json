@@ -1,0 +1,37 @@
+{
+  "action": "opened",
+  "number": 42,
+  "pull_request": {
+    "number": 42,
+    "title": "Fix user authentication bug",
+    "body": "This PR fixes a bug in the user authentication flow where tokens were not being properly validated.",
+    "state": "open",
+    "head": {
+      "ref": "fix-auth-bug",
+      "sha": "abc123def456"
+    },
+    "base": {
+      "ref": "main",
+      "sha": "789012fedcba"
+    },
+    "user": {
+      "login": "testuser",
+      "id": 1001
+    },
+    "html_url": "https://gitea.example.com/owner/repo/pulls/42",
+    "created_at": "2026-06-25T10:00:00Z"
+  },
+  "repository": {
+    "id": 1,
+    "name": "repo",
+    "full_name": "owner/repo",
+    "owner": {
+      "login": "owner",
+      "id": 500
+    }
+  },
+  "sender": {
+    "login": "testuser",
+    "id": 1001
+  }
+}

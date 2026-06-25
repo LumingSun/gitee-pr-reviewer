@@ -1,10 +1,12 @@
+import hashlib
+import hmac
 import json
 import threading
-import time
 
 import pytest
 
 from src.app import app
+from src.platform_adapter import GiteaAdapter
 
 
 @pytest.fixture
@@ -26,9 +28,31 @@ def example_comment_data():
         return json.load(f)
 
 
+# ---------------------------------------------------------------------------
+# Gitea fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def gitea_example_data():
+    with open('tests/fixtures/gitea_example.json', 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+@pytest.fixture(scope="module")
+def gitea_comment_data():
+    with open('tests/fixtures/gitea_comment_example.json', 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Gitee tests
+# ---------------------------------------------------------------------------
+
+
 class TestWebhookToken:
     def test_valid_token(self, client, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', 'KWDB@2026!')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json',
@@ -36,7 +60,7 @@ class TestWebhookToken:
         assert response.status_code == 200
 
     def test_invalid_token_returns_403(self, client, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', 'KWDB@2026!')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json',
@@ -45,14 +69,14 @@ class TestWebhookToken:
         assert 'Invalid webhook token' in response.get_json()['error']
 
     def test_missing_token_returns_403(self, client, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', 'KWDB@2026!')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', 'KWDB@2026!')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json')
         assert response.status_code == 403
 
     def test_no_secret_configured_allows_all(self, client, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         response = client.post('/webhook',
                                data=json.dumps({'action': 'open'}),
                                content_type='application/json')
@@ -61,7 +85,7 @@ class TestWebhookToken:
 
 class TestWebhookResponse:
     def test_webhook_response(self, client, example_data, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         response = client.post('/webhook',
                                data=json.dumps(example_data),
                                content_type='application/json')
@@ -71,7 +95,7 @@ class TestWebhookResponse:
         assert 'Webhook received' in result['message']
 
     def test_open_action_fields(self, client, example_data, caplog, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         data = dict(example_data)
         data['action'] = 'open'
         with caplog.at_level('INFO'):
@@ -84,7 +108,7 @@ class TestWebhookResponse:
         assert str(data['number']) in caplog.text
 
     def test_other_action_does_not_log_pr_open(self, client, example_data, caplog, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         data = dict(example_data)
         data['action'] = 'closed'
         with caplog.at_level('INFO'):
@@ -95,14 +119,14 @@ class TestWebhookResponse:
         assert 'PR open event:' not in caplog.text
 
     def test_invalid_json_returns_400(self, client, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         response = client.post('/webhook',
                                data='not json',
                                content_type='application/json')
         assert response.status_code == 400
 
     def test_missing_fields_defaults(self, client, caplog, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         with caplog.at_level('INFO'):
             response = client.post('/webhook',
                                    data=json.dumps({'action': 'open'}),
@@ -113,7 +137,8 @@ class TestWebhookResponse:
         assert 'number=None' in log_text
 
     def test_comment_with_reviewai_triggers_review(self, client, example_comment_data, caplog, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.REVIEW_TRIGGER_MENTION', '@ReviewAI')
         data = dict(example_comment_data)
         data['action'] = 'comment'
         data['noteable_type'] = 'PullRequest'
@@ -127,7 +152,7 @@ class TestWebhookResponse:
         assert 'PR comment trigger:' in caplog.text
 
     def test_comment_not_pullrequest_does_not_trigger(self, client, example_comment_data, caplog, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         data = dict(example_comment_data)
         data['action'] = 'comment'
         data['noteable_type'] = 'Issue'
@@ -141,7 +166,7 @@ class TestWebhookResponse:
         assert 'PR comment trigger:' not in caplog.text
 
     def test_comment_without_reviewai_does_not_trigger(self, client, example_comment_data, caplog, monkeypatch):
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         # example2.json has comment.body = " @LumingSun  " -- no @ReviewAI
         with caplog.at_level('INFO'):
             response = client.post('/webhook',
@@ -156,7 +181,7 @@ class TestReviewRetry:
 
     def test_retry_on_failure(self, client, example_data, monkeypatch):
         """Review should be retried on failure and eventually succeed."""
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         monkeypatch.setattr('src.app.MAX_REVIEW_RETRIES', 3)
 
         call_count = 0
@@ -180,7 +205,7 @@ class TestReviewRetry:
 
     def test_all_retries_exhausted(self, client, example_data, monkeypatch):
         """When all retries fail, all attempts should be made."""
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         monkeypatch.setattr('src.app.MAX_REVIEW_RETRIES', 3)
 
         call_count = 0
@@ -204,7 +229,7 @@ class TestReviewRetry:
 
     def test_first_attempt_succeeds(self, client, example_data, monkeypatch):
         """When the first attempt succeeds, only one attempt should be made."""
-        monkeypatch.setattr('src.app.GITEE_WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
         monkeypatch.setattr('src.app.MAX_REVIEW_RETRIES', 3)
 
         call_count = 0
@@ -223,3 +248,122 @@ class TestReviewRetry:
         assert response.status_code == 200
         assert done.wait(timeout=5), 'Review did not complete in time'
         assert call_count == 1
+
+
+# ===================================================================
+# Gitea tests  (switch platform by monkeypatching adapter)
+# ===================================================================
+
+
+@pytest.fixture
+def gitea_adapter():
+    """Set up Gitea mode by replacing the module-level adapter."""
+    _adapter = GiteaAdapter()
+    import src.app
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(src.app, 'adapter', _adapter)
+    monkey.setattr(src.app, 'WEBHOOK_SECRET', '')
+    yield _adapter
+    monkey.undo()
+
+
+class TestGiteaWebhookToken:
+    """Gitea webhook token verification (HMAC-SHA256)."""
+
+    def _sign(self, body: bytes, secret: str) -> str:
+        return hmac.new(
+            secret.encode('utf-8'), body, hashlib.sha256
+        ).hexdigest()
+
+    def test_valid_token(self, client, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', 'gitea-secret')
+        body = json.dumps({'action': 'opened'}).encode()
+        sig = self._sign(body, 'gitea-secret')
+        response = client.post('/webhook',
+                               data=body,
+                               content_type='application/json',
+                               headers={'X-Gitea-Signature': sig})
+        assert response.status_code == 200
+
+    def test_invalid_token_returns_403(self, client, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', 'gitea-secret')
+        response = client.post('/webhook',
+                               data=json.dumps({'action': 'opened'}),
+                               content_type='application/json',
+                               headers={'X-Gitea-Signature': 'wrong-sig'})
+        assert response.status_code == 403
+
+    def test_no_secret_configured_allows_all(self, client, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
+        response = client.post('/webhook',
+                               data=json.dumps({'action': 'opened'}),
+                               content_type='application/json')
+        assert response.status_code == 200
+
+
+class TestGiteaWebhookResponse:
+    def test_open_action(self, client, gitea_example_data, caplog, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
+        with caplog.at_level('INFO'):
+            response = client.post('/webhook',
+                                   data=json.dumps(gitea_example_data),
+                                   content_type='application/json')
+        assert response.status_code == 200
+        assert 'PR open event:' in caplog.text
+        assert 'GITEA' in caplog.text
+
+    def test_other_action_does_not_log_pr_open(self, client, gitea_example_data, caplog, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
+        data = dict(gitea_example_data)
+        data['action'] = 'closed'
+        with caplog.at_level('INFO'):
+            response = client.post('/webhook',
+                                   data=json.dumps(data),
+                                   content_type='application/json')
+        assert response.status_code == 200
+        assert 'PR open event:' not in caplog.text
+
+    def test_comment_triggers_review(self, client, gitea_comment_data, caplog, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.REVIEW_TRIGGER_MENTION', '@ReviewAI')
+        data = dict(gitea_comment_data)
+        data['comment'] = dict(data['comment'])
+        data['comment']['body'] = '@ReviewAI please review this'
+        with caplog.at_level('INFO'):
+            response = client.post('/webhook',
+                                   data=json.dumps(data),
+                                   content_type='application/json')
+        assert response.status_code == 200
+        assert 'PR comment trigger:' in caplog.text
+
+    def test_comment_on_issue_does_not_trigger(self, client, gitea_comment_data, caplog, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
+        monkeypatch.setattr('src.app.REVIEW_TRIGGER_MENTION', '@ReviewAI')
+        data = dict(gitea_comment_data)
+        data['issue'] = dict(data['issue'])
+        del data['issue']['pull_request']
+        data['comment'] = dict(data['comment'])
+        data['comment']['body'] = '@ReviewAI please review this'
+        with caplog.at_level('INFO'):
+            response = client.post('/webhook',
+                                   data=json.dumps(data),
+                                   content_type='application/json')
+        assert response.status_code == 200
+        assert 'PR comment trigger:' not in caplog.text
+
+    def test_comment_without_mention_does_not_trigger(self, client, gitea_comment_data, caplog, monkeypatch):
+        monkeypatch.setattr('src.app.adapter', GiteaAdapter())
+        monkeypatch.setattr('src.app.WEBHOOK_SECRET', '')
+        with caplog.at_level('INFO'):
+            response = client.post('/webhook',
+                                   data=json.dumps(gitea_comment_data),
+                                   content_type='application/json')
+        assert response.status_code == 200
+        assert 'PR comment trigger:' not in caplog.text

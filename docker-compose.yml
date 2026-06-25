@@ -1,14 +1,16 @@
 version: '3.8'
 
 services:
-  gitee-webhook-server:
+  pr-review-server:
     build: .
-    container_name: gitee-webhook-server
+    container_name: pr-review-server
     ports:
       - "5000:5000"
       - "443:5000"
     environment:
+      - PLATFORM=${PLATFORM:-gitee}
       - GITEE_WEBHOOK_SECRET=${GITEE_WEBHOOK_SECRET}
+      - GITEA_WEBHOOK_SECRET=${GITEA_WEBHOOK_SECRET}
       - FLASK_DEBUG=0
       - SSL_CERT_PATH=${SSL_CERT_PATH}
       - SSL_KEY_PATH=${SSL_KEY_PATH}
