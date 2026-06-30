@@ -78,7 +78,7 @@
 ```
 
 ### Step 5: 发布评论到PR
-使用`create_comment`将review报告发布到PR评论区。
+使用`create_comment`将review报告发布到PR评论区，注意`create_comment`的 `resource_type`参数为`pull`。
 
 ## 错误处理
 
