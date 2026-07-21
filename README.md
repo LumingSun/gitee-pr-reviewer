@@ -72,7 +72,7 @@ pip install -r requirements-dev.txt
 cp .env.example .env
 
 # Run the server
-python -m src.app
+gunicorn -w 4 -b 0.0.0.0:8002 "src.app:app"
 ```
 
 The server starts on `http://localhost:5000`.
